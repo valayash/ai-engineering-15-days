@@ -166,6 +166,27 @@ feature, the thing that makes a real corpus usable.
 | how much is delivery | "flat Rs 49" | "Rs 99 below Rs 500 [SHP-01]" |
 | can I change my address | *"I don't have that information."* | *"I don't have that information."* |
 
+## When the filter changes nothing
+
+Three of the four questions differ sharply between filtered and unfiltered. The
+fourth - *"can I change my delivery address"* - returns **exactly the same
+answer both ways**: *"I don't have that information."*
+
+That is correct behaviour, not a broken filter. A filter removes wrong-but-similar
+documents from the pool. When the top-k contains no such document, removing
+nothing changes nothing. Same shape as `06_agents`' loop guard, which never fires
+under a sane prompt:
+
+> **A safety mechanism that is invisible in the normal case is working.**
+
+Judge a filter on the cases where the pool *is* poisoned, and count how often
+that happens - not on whether every answer changes.
+
+*(A display bug hid this at first: answers were truncated to 200 characters, and
+the unfiltered version's extra claim arrives at the END. It printed a preamble
+that looked identical while the contradiction was cut off. Print answers in full
+when comparing them.)*
+
 ## What filtering did NOT do
 
 The stale chunk still scores **0.721**, higher than the correct one at 0.710.

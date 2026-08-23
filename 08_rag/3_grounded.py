@@ -73,4 +73,7 @@ for q, truth in QUESTIONS:
             flag = "" if c.status == "current" and c.authority == "policy" \
                    else f"  <-- {c.status}/{c.authority}"
             print(f"      {s:.3f} [{c.id}] {c.text[:52]}...{flag}")
-        print(f"      -> {reply.strip()[:200]}")
+        # Print the answer IN FULL. Truncating hid the whole point of this
+        # file: the unfiltered answer's extra claim arrives at the END.
+        for line in reply.strip().splitlines():
+            print(f"      | {line}")

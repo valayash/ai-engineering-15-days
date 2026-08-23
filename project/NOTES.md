@@ -30,17 +30,58 @@ The deciding factor: I use it daily, so I know immediately when it is wrong.
 | `06_agents/agent.py` | fetch, filter, track, notify on a schedule |
 | `09_evals` | label 50 jobs good/bad myself -> measure precision@5 |
 
-## Open question, to verify before designing around it
+## Data source - VERIFIED 2026-08-23
 
-**Where do postings come from?** LinkedIn scraping is against ToS and hostile -
-not building on it. Candidates to test:
+No scraping. Public ATS APIs, which exist so job aggregators can consume them.
 
-- Greenhouse public job board JSON
-- Lever public postings API
-- RSS / APIs from job boards that publish them
-- company career pages directly
+**Greenhouse** - works, 4/4 companies tested:
 
-Nothing below is decided until this is confirmed.
+```
+https://boards-api.greenhouse.io/v1/boards/{company}/jobs?content=true
+```
+
+| company | jobs |
+|---------|------|
+| stripe | 575 |
+| databricks | 821 |
+| airbnb | 189 |
+| figma | 161 |
+
+**Lever** - API is live (`api.lever.co/v0/postings/{company}?mode=json`), but
+company slugs must be looked up; guessed ones 404. Add later.
+
+LinkedIn: not used. Against ToS, technically hostile.
+
+### What one job record gives us
+
+```
+content       6474 chars of real job description (HTML)
+title         "Data Engineer"
+location      "San Francisco, CA - New York, NY - United States"
+departments   [...]        offices    [...]
+updated_at    2026-08-10   first_published
+absolute_url  the citation link
+```
+
+**One HTTP request per company** returns every posting with its full description.
+No pagination, no auth, no rate-limit headaches at this volume. Be polite anyway.
+
+### What this means for the design
+
+- **Metadata comes free**, and it maps straight onto `08_rag/kb.py`'s `Chunk`:
+  `updated_at` -> staleness filter, `location`/`departments` -> `where` predicate.
+  Filter BEFORE ranking, same as `3_grounded.py`.
+- **6.5k chars per JD is too big to embed whole.** Half of it is boilerplate
+  company blurb identical across every posting - which is exactly the
+  `4_chunking.py` finding: shared text makes vectors converge and destroys
+  discrimination. Strip the boilerplate, or embed only the requirements section.
+- **Cost is real at this scale.** 4 companies = 1,746 jobs. Embedding every full
+  JD is wasteful; embed a distilled version (requirements + title + level) and
+  keep the full text for display. That is `08_rag`'s "what you embed does not
+  have to be what you show".
+- **Reranking is the whole product.** 1,746 postings -> 5 worth reading. Vector
+  search alone cannot do that; `4_rerank.py` can, and can also say "nothing
+  today".
 
 ## Scope for v1
 

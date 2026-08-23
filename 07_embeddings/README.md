@@ -8,11 +8,13 @@ gets a fixed-length list of floats. No prompt, no sampling, no randomness.
 | `1_vectors.py` | what a vector is, fixed size, deterministic, batching |
 | `2_similarity.py` | cosine vs keyword overlap - where they disagree |
 | `3_search.py` | ranking a corpus, and what it returns when it should return nothing |
+| `4_chunking.py` | how the SPLIT changes retrieval - measured, not asserted |
 
 ```bash
 uv run 07_embeddings/1_vectors.py
 uv run 07_embeddings/2_similarity.py
 uv run 07_embeddings/3_search.py "how do I get my money back"
+uv run 07_embeddings/4_chunking.py
 ```
 
 `embed()` lives in `llm.py` next to `chat`/`ask`/`parse`. Model comes from
@@ -162,3 +164,71 @@ hits = rank(qv)                               # pure arithmetic, free
 2 calls, 5.3 seconds. Separating "embed" from "rank" is not a micro-optimisation
 - the embedding is the only part that costs anything, and it is the only part
 you can cache.
+
+## Chunking (4_chunking.py)
+
+One document, one embedding model, five queries. **Only the split changes.**
+
+| strategy | n | avg | r@1 | r@3 | ctx@3 | spread |
+|----------|---|-----|-----|-----|-------|--------|
+| A whole document | 1 | 791 | 5/5 | 5/5 | 791 | 0.000 |
+| B fixed 220, no overlap | 4 | 197 | 3/5 | 5/5 | 588 | 0.114 |
+| C fixed 220, 60 overlap | 5 | 206 | 2/5 | 5/5 | 604 | 0.123 |
+| **D split on sections** | 7 | 111 | 3/5 | 5/5 | **313** | **0.165** |
+| E sections + title prefix | 6 | 155 | 3/5 | 5/5 | 470 | 0.102 |
+
+`r@k` = correct chunk in the top k. `ctx@3` = characters sent to the LLM.
+`spread` = best score minus worst, i.e. how *distinguishable* the chunks are.
+
+### A's perfect score is a trap
+
+One chunk means it always "retrieves" it - r@1 is meaningless at n=1. Read
+`ctx@3`: it ships the entire document on every query. **Recall is free when
+precision is zero.** Whenever a retrieval metric looks perfect, check what it
+would have had to *not* return.
+
+### Chunking is not deciding whether you find it
+
+Every strategy scores r@3 = 5/5. Not one scores r@1 = 5/5. So on this corpus the
+split is not changing *whether* the answer is retrievable - it changes **how much
+junk rides along**: 313 chars for D against 791 for A, for the same answers.
+
+*Caveat: this document is 791 chars in 6 sections, so everything lands in the top
+3 trivially. Across thousands of chunks r@3 is where strategies separate. What
+generalises here is the shape of the metrics, not the numbers.*
+
+### Top-1 is a coin flip
+
+Nothing reaches r@1 = 5/5. Two examples of why:
+
+```
+"how much does shipping cost"  -> 0.653 "Shipping and Returns Policy"   <- the TITLE
+                                  0.649 "Delivery charges. ... Rs 99 ..."  <- the answer
+"do you ship outside India"    -> 0.681 "Delivery charges. ... free anywhere in India"
+                                  0.681 "International. We ship to 40 countries..."
+```
+
+The first is an **orphan fragment**: a bare heading with no information, winning
+on topical density because it is short. The second is an exact **tie** decided by
+sort order. Neither is fixable by tuning the chunker.
+
+> This is why RAG retrieves top-k, not top-1, and why rerankers exist.
+
+### The repair that backfired
+
+E was supposed to fix D: drop fragments under 40 chars (killing the orphan title)
+and prefix the document title to every chunk so each one stands alone. Result:
+
+- recall: **unchanged**
+- context: **worse** (470 vs 313)
+- spread: **collapsed** 0.165 -> 0.102
+
+Every chunk now begins with the same 27 characters, so every chunk moved toward
+the same point. **Context helps a chunk stand alone; identical context makes
+chunks identical.** Contextual prefixing is a real technique - but the prefix has
+to be *specific to the chunk* (its section, its parent heading), never a constant.
+
+Which is the actual lesson of the file: this was a hypothesis that measurement
+killed. Same as the `06_agents` system prompt that turned out not to be
+load-bearing. Chunking advice is everywhere and almost none of it is measured -
+`09_evals` is how you stop guessing.

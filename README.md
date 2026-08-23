@@ -70,4 +70,8 @@ types for free.
   - v1 naive 0/6 (format, not knowledge) -> v2 constrained 6/6
   - hard set: no escape hatch = confident garbage; few-shot 0-for-2; v4 fixed one case and broke another
   - v5 10/10: define categories, don't patch with rules
-- [ ] Day 3 - structured output (JSON you can trust)
+- [x] **Day 3** - structured output: `1_naive` `2_json_mode` `3_schema`
+  - prompt-only -> markdown fences, crash; json_object -> parses but free-form values
+  - Pydantic schema -> constrained decoding: shape + closed vocabulary guaranteed
+  - schema guarantees SHAPE, never CORRECTNESS - still need Day 2's eval harness
+- [ ] Day 4 - tool calling (same mechanism as schemas)

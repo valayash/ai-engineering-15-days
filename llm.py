@@ -38,3 +38,12 @@ def chat(messages, **kw):
 def ask(messages, **kw) -> str:
     """Same, but returns just the reply text."""
     return chat(messages, **kw).choices[0].message.content
+
+
+def parse(messages, schema, **kw):
+    """Schema-constrained call. Returns a validated instance of `schema`."""
+    _throttle()
+    resp = client.chat.completions.parse(
+        model=MODEL, messages=messages, response_format=schema, **kw
+    )
+    return resp.choices[0].message.parsed

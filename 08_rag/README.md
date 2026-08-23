@@ -15,6 +15,7 @@ There is no other step. Everything hard about RAG is in what you retrieve.
 | `2_hard.py` | the same code, four extra documents, everything breaks |
 | `kb.py` | a chunk as a RECORD - id, source, effective date, status, authority |
 | `3_grounded.py` | filter-then-rank + citations - the fix for `2_hard` |
+| `4_rerank.py` | retrieve wide, rerank narrow - and a real "found nothing" signal |
 
 ```bash
 uv run 08_rag/corpus.py                 # build the index (cached)
@@ -22,6 +23,7 @@ uv run 08_rag/1_naive.py
 uv run 08_rag/1_naive.py "what does error E-419 mean"
 uv run 08_rag/2_hard.py
 uv run 08_rag/3_grounded.py
+uv run 08_rag/4_rerank.py
 ```
 
 ## The index stores the model name
@@ -217,3 +219,77 @@ The prompt also spells out the escape hatch:
 Fifth appearance of the same principle - `"required": ["customer"]`, *"never
 answer without tracking data"*, `"hi"` with no `other` category, top-k with
 nothing relevant, and now this. **Make "I don't know" a legal move.**
+
+## Reranking (4_rerank.py)
+
+`3_grounded.py` always sends exactly k chunks. We watched `RET-01` - a returns
+policy - land in a delivery question's top-3 purely to fill a slot. Two costs:
+tokens for noise, and no way to know when *nothing* is relevant.
+
+```
+vector search   cheap, imprecise  ->  cast a wide net (n=6)
+rerank          costly, precise   ->  keep what earns its place
+```
+
+The reranker scores each candidate against the question **directly** rather than
+by vector distance. One call grades all six, using `04_structured_output`'s
+machinery for real work:
+
+```python
+grade: Literal["answers", "related", "irrelevant"]
+```
+
+A `Literal` means an invalid grade is not discouraged, it is **impossible**. And
+the three-way split matters - *related* is the trap category. `SHP-03`
+("delivery takes 3-5 days") is genuinely about delivery and does not answer
+"how much is delivery". Vector search cannot express that difference; it only
+knows both are near the query.
+
+## Result
+
+| question | vector top-3 | after rerank |
+|----------|--------------|--------------|
+| how much is delivery | `SHP-01, INT-01, RET-01` (328 chars) | `SHP-01` (103) |
+| what does E-419 mean | `ERR-419, ERR-402, PRO-01` (372 chars) | `ERR-419` (120) |
+| can I change my address | `CAN-01, TRK-01, RET-01` (362 chars) | **nothing** (0) |
+
+~70% less context, same answers. Note `ERR-402` on the E-419 question: cosine
+ranked it **second** at 0.656, and it is flatly irrelevant - a different error
+code. The reranker caught that; no similarity threshold would have.
+
+## The empty result is the point
+
+```
+-> nothing graded 'answers'. Refusing WITHOUT calling the model.
+```
+
+Back in `07_embeddings` the problem was that top-k always returns k, unrelated
+text scores 0.48, and no threshold separates answerable from unanswerable. **A
+reranker is the answer to that**, because it returns a *judgement*, not a
+distance. An empty list is a real signal that cosine cannot produce at any k.
+
+It also saves the generation call entirely - the refusal costs one rerank instead
+of a rerank plus a generate.
+
+## Cost, honestly
+
+Reranking adds an LLM call per query. It buys back some of it (smaller context to
+generate from, skipped generation on refusals) but not all. In production you
+would use a purpose-built **cross-encoder** reranker - Cohere Rerank, BGE, a
+hosted reranking endpoint - which is far cheaper and faster than a general LLM
+for exactly this. Using `parse()` here is a stand-in that teaches the shape with
+the API we already have.
+
+## Hybrid search, deliberately skipped
+
+The usual next chapter is BM25 + vector fusion for exact terms. It is not here
+because **the case for it did not reproduce**: `E-419`, `REF-2291`, `RMA-` and
+`WELCOME10` all retrieve at rank 1 by vector alone (`07_embeddings`' 0.91 score
+between `SR-1005` and `SR-1003` was two *bare* identifiers, not identifiers
+inside distinguishing sentences).
+
+You would reach for hybrid when identifiers appear in many chunks so the
+distinguishing signal is the exact token, when the corpus is large enough that
+near-duplicates crowd the top-k, or for rare proper nouns the embedding model
+never saw. None of those is true of 17 clean chunks - so adding it here would
+have been cargo-culting, and `09_evals` is how you would decide rather than guess.

@@ -1,15 +1,11 @@
 """Step 3: the loop that won't stop.
 
 usage:
-  uv run 06_agents/3_loops.py                          # sane prompt, guards on
-  uv run 06_agents/3_loops.py --stubborn --noguard     # the runaway
-  uv run 06_agents/3_loops.py --stubborn               # can the guard beat the prompt?
-
-Two independent switches, because they are two independent things: --stubborn
-changes the PROMPT, --noguard changes the CODE.
+  uv run 06_agents/3_loops.py              # normal
+  uv run 06_agents/3_loops.py --stubborn   # a "never give up" prompt, so the guard fires
 
 `2_robust.py` stopped the crash. It did not stop the model from calling the same
-broken tool forever - that just costs money instead of raising.
+broken tool over and over - that costs money instead of raising.
 """
 import inspect, json, sys
 from collections import Counter
@@ -20,12 +16,9 @@ MAX_ROUNDS   = 6    # how many times the model gets to think
 MAX_CALLS    = 12   # rounds are NOT the budget - one round can hold 8 calls
 REPEAT_LIMIT = 2    # same tool + same args more than twice = it is stuck
 
-STUBBORN = "--stubborn" in sys.argv     # a prompt that induces runaways
-NOGUARD  = "--noguard"  in sys.argv     # turn the repetition guard off
-
 
 def dispatch(name: str, raw_args: str) -> dict:
-    """2_robust.py's dispatcher, unchanged."""
+    """2_robust.py's dispatcher, unchanged. Never raises."""
     fn = FUNCS.get(name)
     if fn is None:
         return {"error": f"no tool named {name!r}. available: {list(FUNCS)}"}
@@ -44,10 +37,10 @@ def dispatch(name: str, raw_args: str) -> dict:
 
 
 def signature(tc) -> str:
-    """Identity of a call. Same tool + same arguments -> same string.
+    """Identity of a call: same tool + same arguments -> same string.
 
-    sort_keys matters: {"a":1,"b":2} and {"b":2,"a":1} are the SAME call and
-    must collapse to one signature, or the model escapes the guard by reordering.
+    sort_keys matters - {"a":1,"b":2} and {"b":2,"a":1} are the same call and
+    must collapse, or the model escapes the guard just by reordering keys.
     """
     try:
         args = json.dumps(json.loads(tc.function.arguments or "{}"), sort_keys=True)
@@ -57,36 +50,32 @@ def signature(tc) -> str:
 
 
 def force_answer(messages) -> str:
-    """Budget gone and still no answer. Take the tools away and demand prose.
-
-    Better than printing "gave up": the model has real data from earlier rounds,
-    so the user gets a partial answer instead of nothing.
-    """
+    """Budget gone, still no answer. Drop the tools so prose is the only move."""
     messages.append({"role": "user", "content":
         "Stop calling tools. Using only what you have already retrieved, answer "
         "the original question and state plainly what you could not find out."})
     return chat(messages).choices[0].message.content
 
 
-HELPFUL = ("You answer questions about an order database using the tools provided. "
-           "If a tool returns an error, retry it at most once, then answer with "
-           "what you know and say what was unavailable.")
+SYSTEM = ("You answer questions about an order database using the tools provided. "
+          "If a tool returns an error, retry it at most once, then answer with "
+          "what you know and say what was unavailable.")
 
-# The prompt that creates runaways in the wild. Nothing here is unreasonable on
-# its own - "this is critical", "don't give up" - which is exactly the problem.
-NEVER_GIVE_UP = ("You answer questions about an order database using the tools "
-                 "provided. Live tracking is critical; the user cannot be helped "
-                 "without it. If a tool fails, try again. Never give up, and never "
-                 "answer without live tracking data.")
+# Every clause below is something a reasonable person would write. Together they
+# remove the model's exit condition - that is how runaways happen in real systems.
+STUBBORN = ("You answer questions about an order database using the tools provided. "
+            "Live tracking is critical; the user cannot be helped without it. "
+            "If a tool fails, try again. Never give up, and never answer without "
+            "live tracking data.")
 
 DEFAULT = "Where is Neha Gupta's coffee maker right now?"
 positional = [a for a in sys.argv[1:] if not a.startswith("--")]
 QUESTION = positional[0] if positional else DEFAULT
+prompt = STUBBORN if "--stubborn" in sys.argv else SYSTEM
 
-print(f"Q: {QUESTION}")
-print(f"   prompt: {'never-give-up' if STUBBORN else 'sane'}   guard: {'OFF' if NOGUARD else 'on'}\n")
+print(f"Q: {QUESTION}\n")
 
-messages = [{"role": "system", "content": NEVER_GIVE_UP if STUBBORN else HELPFUL},
+messages = [{"role": "system", "content": prompt},
             {"role": "user", "content": QUESTION}]
 
 seen, calls, rnd, answer = Counter(), 0, 0, None
@@ -105,8 +94,8 @@ while rnd < MAX_ROUNDS and calls < MAX_CALLS:
         sig = signature(tc)
         seen[sig] += 1
 
-        if not NOGUARD and seen[sig] > REPEAT_LIMIT:
-            # Do not execute it. Tell the model it is looping - an error it can act on.
+        if seen[sig] > REPEAT_LIMIT:
+            # Do not run it. Return an error it can act on, not a wall it hits.
             result = {"error": f"loop guard: you already called this {seen[sig] - 1} "
                                f"times and got the same result. Do not call it again. "
                                f"Answer with what you have."}
@@ -115,12 +104,12 @@ while rnd < MAX_ROUNDS and calls < MAX_CALLS:
             result = dispatch(tc.function.name, tc.function.arguments)
             tag = "!!  " if isinstance(result, dict) and "error" in result else "    "
 
-        print(f"round {rnd} call {calls:>2} {tag} {sig[:60]:<60} -> {str(result)[:45]}")
+        print(f"round {rnd} call {calls:>2} {tag} {sig[:58]:<58} -> {str(result)[:45]}")
         messages.append({"role": "tool", "tool_call_id": tc.id,
                          "content": json.dumps(result)})
 
 if answer is None:
-    print(f"\n[budget exhausted: {rnd} rounds, {calls} tool calls, no answer yet]")
+    print(f"\n[budget exhausted: {rnd} rounds, {calls} calls, no answer yet]")
     answer = force_answer(messages)
     print(f"\nFORCED FINAL -> {answer}")
 else:

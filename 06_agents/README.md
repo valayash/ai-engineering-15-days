@@ -14,8 +14,8 @@ when something goes wrong?** Everything here is about that.
 uv run 06_agents/1_fragile.py            # watch it crash
 uv run 06_agents/2_robust.py --selftest  # each guard, no API calls
 uv run 06_agents/2_robust.py             # same question, survives
-uv run 06_agents/3_loops.py --stubborn --noguard   # the runaway
-uv run 06_agents/3_loops.py --stubborn             # guard beats the prompt
+uv run 06_agents/3_loops.py                        # normal
+uv run 06_agents/3_loops.py --stubborn             # watch the loop guard fire
 ```
 
 ## The one line that was fragile
@@ -101,21 +101,22 @@ instead of trusting them. An untested sentence in a system prompt is decoration.
 ## Not crashing is not the same as stopping
 
 `2_robust.py` turned a crash into an error message. A model that keeps retrying
-that error now fails *silently and expensively* instead of loudly. Same broken
-courier, a "never give up" system prompt, no guard:
+that error now fails *silently and expensively* instead of loudly.
 
-```
-round 2 !! track_shipment(SR-1005) -> error
-round 3 !! track_shipment(SR-1005) -> error
-round 4 !! track_shipment(SR-1005) -> error
-round 5 !! track_shipment(SR-1005) -> error      <- billed for every one
-```
+`--stubborn` swaps in a system prompt that causes it:
 
-Nothing in that prompt is unreasonable on its own - *"tracking is critical",
-"if a tool fails, try again", "never give up"*. That is the trap: runaway loops
-come from prompts that read as diligent.
+> *"Live tracking is critical; the user cannot be helped without it. If a tool
+> fails, try again. Never give up, and never answer without live tracking data."*
 
-## Three guards
+Every clause is something a reasonable person would write. Together they remove
+the model's **exit condition** - the task is defined as impossible to finish, so
+the only compliant move is to keep calling. Runaway loops come from prompts that
+read as diligent, not from prompts that read as broken.
+
+The missing piece is always the same: *"never answer without X"* with no clause
+for what to do when X is unavailable.
+
+## Three guards and an exit
 
 **1. Repetition, by signature.**
 
@@ -123,22 +124,29 @@ come from prompts that read as diligent.
 f"{tc.function.name}({json.dumps(args, sort_keys=True)})"
 ```
 
-`sort_keys` is not cosmetic. Without it `{"a":1,"b":2}` and `{"b":2,"a":1}` are
-different strings, and the guard is escaped by key order alone.
+Same tool + same arguments = same string, counted in a `Counter`. Past the limit
+the tool **does not run** - the only guard here that prevents a call rather than
+reporting on one.
 
-Past the limit, **do not run the tool** - return an error saying it is looping.
-Same principle as `2_robust.py`: a message it can act on, not a wall it hits.
+`sort_keys` is not cosmetic: without it `{"a":1,"b":2}` and `{"b":2,"a":1}` are
+different strings and the guard is escaped by key order alone.
 
-**2. Two budgets, because rounds are not calls.**
+`REPEAT_LIMIT = 2` allows two executions and blocks the third - a real retry is
+fine, a pattern is not. Counting per *signature*, not per tool name, matters:
+`track_shipment(SR-1003)` and `track_shipment(SR-1005)` failing in the same round
+is two orders failing once each, not a loop.
+
+**2 and 3. Two budgets, because rounds are not calls.**
 
 ```python
 MAX_ROUNDS = 6     # how many times it gets to think
 MAX_CALLS  = 12    # one round can contain 8 parallel calls
 ```
 
-Capping rounds alone lets a single round issue 50 calls. Cap both.
+Capping rounds alone lets a single round issue 50 calls. Rounds bound your API
+bill; calls bound your *side effects*.
 
-**3. A forced final answer instead of "gave up".**
+**4. A forced final answer instead of "gave up".**
 
 ```python
 messages.append({"role": "user", "content":
@@ -147,26 +155,19 @@ messages.append({"role": "user", "content":
 return chat(messages).choices[0].message.content     # note: no tools=
 ```
 
-Dropping `tools=` leaves it no other move than prose. By this point the context
-holds real data from earlier rounds, so the user gets *"in_transit, live location
-unavailable"* rather than a stack trace or silence. **Every agent needs a
-degraded-but-useful exit.**
+Dropping `tools=` leaves no legal move but prose. By then the context holds real
+data from earlier rounds, so the user gets *"in_transit, live location
+unavailable"* instead of silence. **Every agent needs a degraded-but-useful
+exit** - running out of budget is a normal outcome, not an error.
 
-## What the guard did not fix
+## The loop guard only catches exact repeats
 
-Same bad prompt, guard on:
-
-```
-round 4 LOOP track_shipment(SR-1005)   <- blocked
-round 5      get_order(SR-1005)        <- fine
-round 6      list_orders({})           <- flailing: different signature, useless
-```
-
-The loop guard only catches **exact repeats**. Told never to give up, the model
-just wandered to calls it had not made yet and still burned the budget - only
-`MAX_CALLS` stopped it, and `force_answer` produced the answer.
+With `--stubborn`, blocking `track_shipment` sent the model to `list_orders({})`
+instead - a fresh signature, useless, still billed. `MAX_CALLS` is what stops
+that.
 
 > **Guards bound the cost of bad behaviour. They do not produce good behaviour.**
 
-Which is the honest ordering: fix the prompt and the tool surface first; guards
-are the seatbelt, not the steering.
+Fix the prompt and the tool surface first. Guards are the seatbelt, not the
+steering - and with a sane prompt the guard never fires at all, which is what a
+good safety mechanism looks like.

@@ -1,32 +1,53 @@
-# AI Engineering in 15 Days — code-first
+# AI Engineering — code-first
 
-Stack: Python + Google Gemini (`google-genai`). Key in `.env` as `GOOGLE_API_KEY`.
-Run anything with `uv run day1/1_simple.py "your prompt"`.
+Learning AI engineering by building each piece from scratch, then measuring it.
+Every folder is a topic with runnable code and a `README.md` of takeaways.
 
-## Plan
+**Stack:** Python + any OpenAI-compatible API (currently Gemini's free tier).
 
-| Day | Topic | You build |
-|-----|-------|-----------|
-| 1 | Calls, system prompts, context, tokens, streaming | CLI chatbot with real memory |
-| 2 | Prompt engineering *as engineering* | A prompt test harness |
-| 3 | Structured output you can trust | Text -> typed object extractor |
-| 4 | Tool / function calling | LLM that queries a real SQLite DB |
-| 5 | The agent loop, from scratch (no framework) | ReAct agent in ~100 lines |
-| 6 | Embeddings + vector math | Semantic search over your docs |
-| 7 | Chunking + a vector DB | Mini RAG, end to end |
-| 8 | RAG that actually works | Hybrid search, reranking, citations |
-| 9 | Evaluation | LLM-as-judge + regression suite |
-| 10 | Agent memory, planning, multi-step | Multi-step task agent |
-| 11 | **LangChain + LangGraph** | Rebuild the Day 5 agent in LangGraph, compare |
-| 12 | **MCP (Model Context Protocol)** | Your own MCP server |
-| 13 | Production: cost, caching, retries, tracing, guardrails | Hardened client + prompt-injection defense |
-| 14 | Capstone | One full app |
-| 15 | Interview prep | AI system design + defending your build |
+## Setup
 
-**Why frameworks come at Day 11, not Day 1:** LangChain/LangGraph wrap the
-things you build in Days 1-10. Build them by hand first, then the framework is
-obvious instead of magic - and you can say in an interview what it bought you
-and what it cost.
+```bash
+cp .env.example .env      # paste your key
+uv sync
+uv run 01_basics/1_simple.py "Hello, tell me about yourself"
+```
+
+Provider is config, not code — `.env` holds `LLM_BASE_URL`, `LLM_API_KEY`,
+`LLM_MODEL`. Swap to OpenAI, Groq, or a local Ollama model without touching a
+line of Python. `.env.example` has ready-to-uncomment blocks.
+
+## Topics
+
+| | topic | status | covers |
+|-|-------|--------|--------|
+| 01 | [basics](01_basics/) | done | calls, roles, context, streaming, raw HTTP |
+| 02 | [context](02_context/) | done | growing-context cost, sliding window, summarization |
+| 03 | [prompting](03_prompting/) | done | ground-truth datasets, scoring prompt versions |
+| 04 | [structured_output](04_structured_output/) | done | JSON mode, Pydantic schemas, constrained decoding |
+| 05 | tools | next | function calling against a real SQLite DB |
+| 06 | agents | | the loop, from scratch, no framework |
+| 07 | embeddings | | vectors, similarity, semantic search |
+| 08 | rag | | chunking, retrieval, reranking, citations |
+| 09 | evals | | LLM-as-judge, regression suites |
+| 10 | memory | | agent memory, multi-step planning |
+| 11 | frameworks | | LangChain + LangGraph (rebuild 06, compare) |
+| 12 | mcp | | your own MCP server |
+| 13 | production | | cost, caching, retries, tracing, guardrails |
+| 14 | capstone | | one full app |
+
+**Why frameworks come at 11, not 01:** LangChain and LangGraph wrap what you
+build in 01–10. Build it by hand first and the framework is obvious instead of
+magic — and you can say what it bought you and what it cost.
+
+## Shared clients
+
+| file | client |
+|------|--------|
+| `llm.py` | `openai` SDK + rate limiting. `chat()` `ask()` `parse()` |
+| `llm_raw.py` | plain `httpx`. Used only in `01_basics/raw/` to show the wire format |
+
+`LLM_RPM` in `.env` controls the throttle (free tiers are strict).
 
 ## The mental model
 
@@ -34,44 +55,14 @@ An LLM API is a **stateless function**. No memory, no learning at request time.
 If the model knows something, it was in the training data or *you put it in the
 prompt*.
 
-Everything else - chat memory, RAG, agents, tools - is **scaffolding you build
-around that stateless function**.
-
 ```
 +-- CONTEXT WINDOW ------------------------------+
-|  system_instruction   <- rules, never grows     |
-|  contents[]           <- conversation, grows    |
+|  system      <- rules you control               |
+|  messages[]  <- conversation, grows every turn  |
 |  (+ retrieved docs, tool defs, tool results)    |
 +-------------------------------------------------+
 ```
 
-## Two tracks
-
-Every day exists twice:
-
-| folder | client | why |
-|--------|--------|-----|
-| `dayN/` | `llm.py` - the `openai` SDK | how you'd actually ship it |
-| `dayN/raw/` | `llm_raw.py` - plain `httpx` | see every byte on the wire |
-
-Identical behaviour, identical `.env`. The raw version is a plain
-`POST {LLM_BASE_URL}/chat/completions` with a JSON body - no magic. Read the raw
-one to understand the mechanism, use the SDK one when you want retries and
-types for free.
-
-## Progress
-
-- [x] **Day 1** - calls, system prompt, context, streaming
-  - `1_simple` `2_system` `3_context` `4_stream`
-  - open thread: `messages` grows forever -> trim it on Day 2
-- [x] **Day 2a** - context management: `1_problem` `2_window` `3_summary`
-  - full history -> quadratic cost; window -> flat but forgets; summary -> lossy but remembers
-- [x] **Day 2b** - prompt engineering, measured: `4_measure` `5_hard`
-  - v1 naive 0/6 (format, not knowledge) -> v2 constrained 6/6
-  - hard set: no escape hatch = confident garbage; few-shot 0-for-2; v4 fixed one case and broke another
-  - v5 10/10: define categories, don't patch with rules
-- [x] **Day 3** - structured output: `1_naive` `2_json_mode` `3_schema`
-  - prompt-only -> markdown fences, crash; json_object -> parses but free-form values
-  - Pydantic schema -> constrained decoding: shape + closed vocabulary guaranteed
-  - schema guarantees SHAPE, never CORRECTNESS - still need Day 2's eval harness
-- [ ] Day 4 - tool calling (same mechanism as schemas)
+Everything else — chat memory, RAG, agents, tools — is **scaffolding around
+that stateless function**. The job is deciding what goes into the context, and
+what you do with what comes out.

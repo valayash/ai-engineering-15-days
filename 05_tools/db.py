@@ -18,7 +18,11 @@ ROWS = [
 def connect():
     DB.parent.mkdir(exist_ok=True)
     fresh = not DB.exists()
-    con = sqlite3.connect(DB)
+    # check_same_thread=False: a web server runs handlers on threadpool threads,
+    # so the connection is used from a different thread than the one that made it.
+    # Safe here because the API is read-only; concurrent WRITES over one shared
+    # connection need a lock or a connection per thread.
+    con = sqlite3.connect(DB, check_same_thread=False)
     con.row_factory = sqlite3.Row
     if fresh:
         con.execute("""CREATE TABLE orders (

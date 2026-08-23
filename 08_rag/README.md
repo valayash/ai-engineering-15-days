@@ -13,12 +13,15 @@ There is no other step. Everything hard about RAG is in what you retrieve.
 | `corpus.py` | the knowledge base + a cached index; `MESSY` adds realistic rot |
 | `1_naive.py` | the whole pipeline, against a clean corpus |
 | `2_hard.py` | the same code, four extra documents, everything breaks |
+| `kb.py` | a chunk as a RECORD - id, source, effective date, status, authority |
+| `3_grounded.py` | filter-then-rank + citations - the fix for `2_hard` |
 
 ```bash
 uv run 08_rag/corpus.py                 # build the index (cached)
 uv run 08_rag/1_naive.py
 uv run 08_rag/1_naive.py "what does error E-419 mean"
 uv run 08_rag/2_hard.py
+uv run 08_rag/3_grounded.py
 ```
 
 ## The index stores the model name
@@ -114,3 +117,82 @@ Which reframes the job. The fixes are not prompt engineering:
 RAG quality is a data-governance problem wearing an ML costume. Most teams tune
 prompts and chunk sizes for weeks when the actual defect is that nobody deleted
 the 2023 policy.
+
+## A chunk is a record, not a string
+
+`1_naive.py` and `2_hard.py` store bare strings. A string cannot tell you when it
+was written or whether it still applies, so a retriever built on strings cannot
+either. That is the entire reason a 2023 refund policy outranked the live one.
+
+```python
+@dataclass(frozen=True)
+class Chunk:
+    id: str            # citeable handle
+    text: str          # the only field that gets embedded
+    source: str        # where to go to verify or fix it
+    effective: str     # since when
+    status: str        # current | superseded
+    authority: str     # policy | marketing | support-note
+```
+
+**Only `text` is embedded.** Metadata is for filtering and citing, not for
+similarity - embedding `"status: superseded"` would make the word *superseded*
+part of what queries match against. Noise, not signal.
+
+`authority` earns its place separately from `status`: the 30-day returns banner
+is **current** and **wrong**. It is live marketing copy that contradicts live
+policy. No date filter catches that; a source-authority filter does.
+
+## Filter first, then rank
+
+```python
+pool = [(c, v) for c, v in zip(CHUNKS, VECS) if where is None or where(c)]
+scored = sorted(...)[:k]
+```
+
+Ranking first and filtering after is a real bug: you ask for k=3, two come back
+superseded, you silently hand the model one chunk and never notice the context
+got thin. Filter first and k always means k.
+
+This is what a vector DB's metadata filter is actually *for* - not a convenience
+feature, the thing that makes a real corpus usable.
+
+## The result
+
+| question | no filter | `status=current AND authority=policy` |
+|----------|-----------|----------------------------------------|
+| how long do refunds take | 10-14 **and** 5-7 days | "5-7 business days [REF-01]" |
+| how many days to return | 7 days **or** 30 days | "7 days from delivery [RET-01]" |
+| how much is delivery | "flat Rs 49" | "Rs 99 below Rs 500 [SHP-01]" |
+| can I change my address | *"I don't have that information."* | *"I don't have that information."* |
+
+## What filtering did NOT do
+
+The stale chunk still scores **0.721**, higher than the correct one at 0.710.
+Filtering does not improve the ranking - it removes the candidate from the pool
+before ranking happens. You cannot fix a ranking problem by rewriting the query;
+you fix it by not offering the wrong document in the first place.
+
+The last row is worth noting too: the address question was refused **with and
+without** filtering. Metadata fixed contradictions, not refusals - those were
+already fine. Fix the failure you measured, not the one you assumed.
+
+## Citations make it checkable
+
+```
+Refunds are processed within 5-7 business days [REF-01].
+```
+
+`REF-01` resolves to `refund-policy.md`, effective 2026-02-01. A support agent
+can open that file; an auditor can trace the claim; and when the answer is wrong
+you learn whether the **retrieval** or the **generation** failed - which are
+different bugs with different fixes.
+
+The prompt also spells out the escape hatch:
+
+> *"If the sources do not answer the question, say exactly: I don't have that
+> information."*
+
+Fifth appearance of the same principle - `"required": ["customer"]`, *"never
+answer without tracking data"*, `"hi"` with no `other` category, top-k with
+nothing relevant, and now this. **Make "I don't know" a legal move.**

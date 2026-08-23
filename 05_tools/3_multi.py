@@ -1,5 +1,8 @@
-"""Step 3: several tools, and answers that need MORE THAN ONE round."""
-import json
+"""Step 3: several tools, and answers that need MORE THAN ONE round.
+
+usage: uv run 05_tools/3_multi.py ["your question"]
+"""
+import json, sys
 from llm import chat
 from db import connect
 
@@ -35,7 +38,9 @@ TOOLS = [
                        "required": ["order_id"]}}},
 ]
 
-QUESTION = "What did Priya Sharma's cancelled order cost?"
+DEFAULT = "What did Priya Sharma's cancelled order cost?"
+QUESTION = sys.argv[1] if len(sys.argv) > 1 else DEFAULT
+print(f"Q: {QUESTION}\n")
 messages = [{"role": "user", "content": QUESTION}]
 
 # The loop. You do NOT know in advance how many rounds this takes.

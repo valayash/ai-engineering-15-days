@@ -1,5 +1,8 @@
-"""Step 2: run the function, feed the result back, get a grounded answer."""
-import json
+"""Step 2: run the function, feed the result back, get a grounded answer.
+
+usage: uv run 05_tools/2_execute.py ["your question"]
+"""
+import json, sys
 from llm import chat
 from db import connect
 
@@ -25,7 +28,10 @@ TOOLS = [{
 }]
 FUNCS = {"get_order": get_order}     # name -> real python function
 
-messages = [{"role": "user", "content": "Where is order SR-1003 and what did it cost?"}]
+DEFAULT = "Where is order SR-1003 and what did it cost?"
+QUESTION = sys.argv[1] if len(sys.argv) > 1 else DEFAULT
+messages = [{"role": "user", "content": QUESTION}]
+print(f"Q: {QUESTION}\n")
 
 # --- turn 1: model asks for a tool ------------------------------------------
 msg = chat(messages, tools=TOOLS).choices[0].message

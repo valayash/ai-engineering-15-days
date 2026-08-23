@@ -1,4 +1,8 @@
-"""Step 1: declare a tool. See what the model ASKS for. Run nothing yet."""
+"""Step 1: declare a tool. See what the model ASKS for. Run nothing yet.
+
+usage: uv run 05_tools/1_declare.py ["your question"]
+"""
+import sys
 from llm import chat
 
 TOOLS = [{
@@ -16,7 +20,10 @@ TOOLS = [{
     },
 }]
 
-for question in ["Where is order SR-1003?", "What is 2 + 2?"]:
+DEFAULT = ["Where is order SR-1003?", "What is 2 + 2?"]
+QUESTIONS = sys.argv[1:] or DEFAULT
+
+for question in QUESTIONS:
     resp = chat([{"role": "user", "content": question}], tools=TOOLS)
     msg = resp.choices[0].message
 

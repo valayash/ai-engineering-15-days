@@ -11,9 +11,15 @@ Tool calling is a protocol where it *asks*, and **your code** executes.
 | `3_multi.py` | several tools + a loop, because one round isn't enough |
 
 ```bash
-uv run 05_tools/db.py          # inspect the data
-uv run 05_tools/3_multi.py
+uv run 05_tools/db.py                      # inspect the data
+uv run 05_tools/3_multi.py                 # uses the default question
+uv run 05_tools/3_multi.py "Which of Arjun Mehta's orders is in transit?"
 ```
+
+All three scripts take an optional question and fall back to a default.
+Round count varies with the question - "cancelled order cost" needs 2 tool
+calls, "which order is in transit" needs 1, because `list_orders` already
+returns status. Same code, different plan, decided at runtime.
 
 ## The round trip
 

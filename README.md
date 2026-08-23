@@ -45,6 +45,20 @@ around that stateless function**.
 +-------------------------------------------------+
 ```
 
+## Two tracks
+
+Every day exists twice:
+
+| folder | client | why |
+|--------|--------|-----|
+| `dayN/` | `llm.py` - the `openai` SDK | how you'd actually ship it |
+| `dayN/raw/` | `llm_raw.py` - plain `httpx` | see every byte on the wire |
+
+Identical behaviour, identical `.env`. The raw version is a plain
+`POST {LLM_BASE_URL}/chat/completions` with a JSON body - no magic. Read the raw
+one to understand the mechanism, use the SDK one when you want retries and
+types for free.
+
 ## Progress
 
 - [x] **Day 1** - calls, system prompt, context, streaming

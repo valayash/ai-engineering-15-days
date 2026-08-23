@@ -12,6 +12,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "google-genai" },
+    { name = "httpx" },
     { name = "openai" },
     { name = "python-dotenv" },
 ]
@@ -19,6 +20,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "google-genai", specifier = ">=2.19.0" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "openai", specifier = ">=3.3.1" },
     { name = "python-dotenv", specifier = ">=1.2.3" },
 ]

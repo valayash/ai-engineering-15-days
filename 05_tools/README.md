@@ -9,7 +9,6 @@ Tool calling is a protocol where it *asks*, and **your code** executes.
 | `1_declare.py` | declare a tool; the model decides whether it needs one |
 | `2_execute.py` | run it, feed the result back, get a grounded answer |
 | `3_multi.py` | several tools + a loop, because one round isn't enough |
-| `4_limits.py` | a permanently failing tool + a "never give up" prompt = runaway |
 
 ```bash
 uv run 05_tools/db.py                      # inspect the data
@@ -66,28 +65,6 @@ Still just a list you append to.
 
 `msg.tool_calls` is a **list** - the model batches everything it can see it needs
 in one response. "Who spent the most?" issued 8 tool calls in a single round.
-
-## The runaway loop
-
-`4_limits.py` combines two ordinary things:
-
-```python
-SYSTEM = "Never give up. If a tool fails, retry it - transient errors usually clear."
-return {"error": "tracking service temporarily unavailable, please retry"}   # never recovers
-```
-
-Result: `HIT THE CAP: 5 rounds, 5 tool calls, no answer, 12 messages in context.`
-
-**Without that system prompt the model retried once and reported the failure
-honestly.** The model wasn't the problem - the prompt was. The word "temporarily"
-tells it retrying will work; "never give up" removes its exit.
-
-Uncapped, this runs forever - and each round resends a longer `messages` list, so
-cost climbs as it spins. A runaway agent overnight is a real, expensive incident.
-
-Real agents add: a wall-clock and token budget (not just an iteration cap),
-repeat detection (same tool + same args twice -> stop), and error classification
-(retry 503, never retry 404). See `06_agents`.
 
 ## Tool design decides agent behaviour
 

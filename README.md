@@ -64,4 +64,6 @@ types for free.
 - [x] **Day 1** - calls, system prompt, context, streaming
   - `1_simple` `2_system` `3_context` `4_stream`
   - open thread: `messages` grows forever -> trim it on Day 2
-- [ ] Day 2 - prompt engineering + history trimming
+- [x] **Day 2a** - context management: `1_problem` `2_window` `3_summary`
+  - full history -> quadratic cost; window -> flat but forgets; summary -> lossy but remembers
+- [ ] Day 2b - prompt engineering + a test harness

@@ -9,6 +9,7 @@ when something goes wrong?** Everything here is about that.
 | `1_fragile.py` | 05's loop, unchanged, meeting a tool that raises. It dies. |
 | `2_robust.py` | a dispatcher that never raises - failures become context, not crashes |
 | `3_loops.py` | repetition detection, two budgets, and a forced final answer |
+| `4_write.py` | a tool that MUTATES - approval gates, preconditions, an audit log |
 
 ```bash
 uv run 06_agents/1_fragile.py            # watch it crash
@@ -16,6 +17,8 @@ uv run 06_agents/2_robust.py --selftest  # each guard, no API calls
 uv run 06_agents/2_robust.py             # same question, survives
 uv run 06_agents/3_loops.py                        # normal
 uv run 06_agents/3_loops.py --stubborn             # watch the loop guard fire
+uv run 06_agents/4_write.py "Cancel order SR-1005"        # then answer y or n
+uv run 06_agents/4_write.py "Cancel Priya Sharma's order" # ambiguous - watch it refuse
 ```
 
 ## The one line that was fragile
@@ -171,3 +174,89 @@ that.
 Fix the prompt and the tool surface first. Guards are the seatbelt, not the
 steering - and with a sane prompt the guard never fires at all, which is what a
 good safety mechanism looks like.
+
+## Reads are cheap to get wrong. Writes are not.
+
+Every guard so far protected your **wallet**. `cancel_order` issues a refund, and
+no amount of apologising in round 5 undoes it. Three independent layers, because
+any one of them can be talked around.
+
+**1. The tool defends itself.** Preconditions live in the function, not the prompt:
+
+```python
+if row["status"] == "cancelled":
+    return {"ok": True, "changed": False, "note": "already cancelled"}   # idempotent
+if row["status"] == "delivered":
+    return {"error": f"{order_id} is already delivered and cannot be cancelled"}
+```
+
+A prompt is a suggestion; a function is not. Approving `SR-1001` (delivered) still
+changes nothing - the human said yes and the *tool* said no. Idempotency matters
+just as much: a retried cancel must not refund twice, so "already cancelled"
+returns `ok` with `changed: False` rather than an error.
+
+**2. A human gate on write tools only.**
+
+```python
+WRITE_TOOLS = {"cancel_order"}
+...
+elif name in WRITE_TOOLS:
+    if confirm(name, args): ...
+```
+
+Reads run unattended - gating them would make the agent useless. Two properties
+matter more than the prompt itself:
+
+- **It fails closed.** Anything but an explicit `y` is a no, and `EOFError`
+  (cron, CI, piped stdin - nobody there to ask) is also a no. A gate that
+  auto-approves when unattended is not a gate.
+- **A refusal is data, not a crash.** The denial goes back as a tool message, so
+  the model explains it: *"the request was declined by a human reviewer."*
+
+**3. An audit log of approved attempts.**
+
+```
+audit log: 1 approved, 0 actually changed the DB
+```
+
+Approved and *changed something* are different numbers - conflating them reports
+refunds that never happened. This log is also the answer to the partial-batch
+problem: `msg.tool_calls` is a list, so a raise partway through leaves some
+executions done and some not. Append to the log at the moment of execution and
+you still know which.
+
+## Ambiguity is the actual danger
+
+*"Cancel Priya Sharma's order"* - she has three. There is no correct guess, and a
+guess costs a real refund. It asked instead:
+
+> *"Could you please clarify which order you would like to cancel?"*
+
+That came from one sentence in the system prompt: *"If the request is ambiguous,
+ask which order they mean instead of guessing."* Same shape as `05_tools`'
+invented `customer: "Alice"` - **forced choice produces confident garbage**, and
+the fix is always to make "I don't know" a legal move.
+
+Note it is only *one* of the three layers, and the weakest. It is why the human
+gate exists underneath it.
+
+## Debugging note: check the tool list before blaming the model
+
+First run of this file, the model kept saying it could not cancel anything -
+inventing a rule that only `processing` orders are cancellable. That looked like
+a refusal to diagnose. It was not:
+
+```python
+FUNCS = {..., "cancel_order": cancel_order}      # registered
+TOOLS = [...]                                    # NOT declared
+```
+
+The function existed, the schema was never added, so the model genuinely had no
+such tool and was rationalising its absence. `FUNCS` and `TOOLS` are two lists
+that must agree, and nothing checks that they do:
+
+```python
+assert sorted(t["function"]["name"] for t in TOOLS) == sorted(FUNCS)
+```
+
+Cheap assertion, and it would have saved three confusing runs.

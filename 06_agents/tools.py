@@ -34,8 +34,39 @@ def track_shipment(order_id: str) -> dict:
     raise ConnectionError("courier API: connection timed out after 30s")
 
 
+def cancel_order(order_id: str) -> dict:
+    """WRITE. Cancels an order and refunds the customer. There is no undo.
+
+    Note where the rules live: in the FUNCTION, not the prompt. The model can be
+    talked into anything; this cannot. Preconditions belong on the write side.
+    """
+    row = con.execute("SELECT status, customer, item, amount FROM orders "
+                      "WHERE order_id = ?", (order_id,)).fetchone()
+    if row is None:
+        return {"error": f"no order {order_id}"}
+    if row["status"] == "cancelled":
+        # Idempotent: asking twice is not an error, and does not refund twice.
+        return {"ok": True, "order_id": order_id, "changed": False,
+                "note": "already cancelled"}
+    if row["status"] == "delivered":
+        return {"error": f"{order_id} is already delivered and cannot be cancelled"}
+
+    con.execute("UPDATE orders SET status = 'cancelled' WHERE order_id = ?", (order_id,))
+    con.commit()
+    return {"ok": True, "order_id": order_id, "changed": True,
+            "refunded": row["amount"], "item": row["item"]}
+
+
+def reset():
+    """Put the DB back, so the demo is repeatable after you cancel things."""
+    from db import ROWS
+    con.execute("DELETE FROM orders")
+    con.executemany("INSERT INTO orders VALUES (?,?,?,?,?,?)", ROWS)
+    con.commit()
+
+
 FUNCS = {"list_orders": list_orders, "get_order": get_order,
-         "track_shipment": track_shipment}
+         "track_shipment": track_shipment, "cancel_order": cancel_order}
 
 TOOLS = [
     {"type": "function", "function": {
@@ -59,6 +90,14 @@ TOOLS = [
     {"type": "function", "function": {
         "name": "track_shipment",
         "description": "Live courier location for an in-transit order. Needs an order ID.",
+        "parameters": {"type": "object",
+                       "properties": {"order_id": {"type": "string"}},
+                       "required": ["order_id"]}}},
+    {"type": "function", "function": {
+        "name": "cancel_order",
+        "description": "Cancel ONE order and refund the customer. Permanent - there "
+                       "is no way to undo this. Needs an exact order ID. Only use it "
+                       "when the user has clearly asked to cancel a specific order.",
         "parameters": {"type": "object",
                        "properties": {"order_id": {"type": "string"}},
                        "required": ["order_id"]}}},

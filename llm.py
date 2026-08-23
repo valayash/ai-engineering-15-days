@@ -12,6 +12,7 @@ client = OpenAI(
     max_retries=5,
 )
 MODEL = os.environ["LLM_MODEL"]
+EMBED_MODEL = os.getenv("LLM_EMBED_MODEL", "gemini-embedding-001")
 
 RPM = int(os.getenv("LLM_RPM", "15"))     # free-tier requests per minute
 _calls = deque()                          # timestamps of recent calls
@@ -47,3 +48,16 @@ def parse(messages, schema, **kw):
         model=MODEL, messages=messages, response_format=schema, **kw
     )
     return resp.choices[0].message.parsed
+
+
+def embed(texts, model: str = None) -> list[list[float]]:
+    """Text -> vectors. Accepts a string or a list; always returns a list of vectors.
+
+    A different endpoint from chat: no messages, no sampling, no randomness.
+    Same input always gives the same vector.
+    """
+    _throttle()
+    one = isinstance(texts, str)
+    resp = client.embeddings.create(model=model or EMBED_MODEL,
+                                    input=[texts] if one else texts)
+    return [d.embedding for d in resp.data]

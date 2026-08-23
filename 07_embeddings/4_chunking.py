@@ -107,25 +107,3 @@ for name, chunks in STRATEGIES.items():
           f"{spread / len(qs):>7.3f}")
     for m in misses:
         print(f"{'':<26}     miss@1 {m!r}")
-
-print("""
-r@1/r@3  correct chunk in the top 1 / top 3
-ctx@3    characters of context sent to the LLM per query
-spread   best score minus worst - how DISTINGUISHABLE the chunks are
-
-Three things this measures, none of which is what you would guess:
-
-1. A scores a perfect r@1 for a stupid reason - one chunk, so it always
-   'retrieves' it. Read ctx@3 instead: it ships the whole document every
-   time. Recall is free when precision is zero.
-
-2. Every strategy gets r@3 = 5/5, and NONE gets r@1 = 5/5. On a document
-   this small the answer is always in the top 3, so chunking is not deciding
-   whether you find it - it decides how much junk rides along (D: 313 chars
-   vs A: 791). And top-1 is a coin flip regardless. Retrieve k > 1.
-
-3. E was meant to repair D by prefixing the title to every chunk. It made
-   things worse: same recall, more context, and spread collapsed 0.128 ->
-   0.054. A prefix shared by ALL chunks adds no discriminating signal and
-   dilutes the signal that was there. Context helps a chunk stand alone;
-   identical context makes chunks identical.""")

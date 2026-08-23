@@ -55,6 +55,27 @@ Still just a list you append to.
 - Tool results pile into `messages`, so long agent runs blow the context window.
   `02_context` applies here too.
 
+## Tool design decides agent behaviour
+
+`list_orders` originally had `"required": ["customer"]`. Asked *"which orders are
+still in transit?"* - a question with no customer in it - the model **invented
+`customer: "Alice"`**, got `[]`, and gave up.
+
+That is not the model being dumb. Constrained decoding *forces* a string into a
+required field; inventing one was the only legal move. Three fixes, in order of
+how much they mattered:
+
+1. **`"required": []`** - make genuinely optional arguments optional. The escape hatch.
+2. **`"enum": [...]` on `status`** - makes an invalid value impossible, and silently
+   documents your data so the model uses `in_transit`, not `"In Transit"`.
+3. **A system prompt** - *"never invent argument values, omit them instead."*
+   Weakest of the three: a prompt can be ignored, a schema cannot.
+
+> **When an agent misbehaves, look at the tool surface before the prompt.**
+
+Same root cause as `03_prompting` classifying `"hi"` as `account` with no `other`
+category available: **forced choice produces confident garbage.**
+
 ## A tool is any function you let the model trigger
 
 Not database-specific: plain functions, HTTP APIs, filesystem, shell commands,

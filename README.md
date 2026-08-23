@@ -66,4 +66,8 @@ types for free.
   - open thread: `messages` grows forever -> trim it on Day 2
 - [x] **Day 2a** - context management: `1_problem` `2_window` `3_summary`
   - full history -> quadratic cost; window -> flat but forgets; summary -> lossy but remembers
-- [ ] Day 2b - prompt engineering + a test harness
+- [x] **Day 2b** - prompt engineering, measured: `4_measure` `5_hard`
+  - v1 naive 0/6 (format, not knowledge) -> v2 constrained 6/6
+  - hard set: no escape hatch = confident garbage; few-shot 0-for-2; v4 fixed one case and broke another
+  - v5 10/10: define categories, don't patch with rules
+- [ ] Day 3 - structured output (JSON you can trust)

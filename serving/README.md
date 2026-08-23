@@ -3,6 +3,12 @@
 A side-track, not a numbered topic. Takes `06_agents/agent.py` and puts it
 behind an API.
 
+| file | |
+|------|-|
+| `1_api.py` | one-shot: every request starts cold |
+| `conversation.py` | `run_turn()` - agent.run() that accepts and returns history |
+| `2_session.py` | multi-turn: back-to-back questions that remember |
+
 ```bash
 uv run uvicorn serving.1_api:app --reload --port 8000
 curl -s -X POST localhost:8000/ask -H 'content-type: application/json' \
@@ -92,8 +98,108 @@ either.
 | auth | anyone who can reach the port can spend your API budget |
 | per-user rate limits | `llm.py` throttles the *process*, not the caller |
 | request timeout | one runaway request holds a thread until the budget ends |
-| sessions | every call starts cold - multi-turn needs a conversation store |
 | cost tracking | `Result` has `rounds`/`calls`; nobody is logging them |
 
 That list is `13_production`, and most of it is not AI-specific - it is ordinary
 service engineering, which is most of the job.
+
+---
+
+# Multi-turn (2_session.py)
+
+```bash
+uv run uvicorn serving.2_session:app --reload --port 8001
+```
+
+```bash
+curl -s -X POST localhost:8001/chat -H "Content-Type: application/json" -d '{"question":"Which orders are in transit?"}'
+```
+
+Then pass the returned `session_id` back:
+
+```bash
+curl -s -X POST localhost:8001/chat -H "Content-Type: application/json" -d '{"session_id":"<id>","question":"What did the second one cost?"}'
+```
+
+## Why a new runner
+
+`agent.run()` builds `messages` fresh and returns only the answer - there is
+nothing to continue from. `conversation.run_turn()` changes exactly two things:
+
+```python
+messages = list(history) if history else [{"role": "system", "content": system}]
+messages.append({"role": "user", "content": question})
+```
+
+and returns `Turn.messages`, the full transcript. `dispatch()` and `signature()`
+are **imported** from `agent.py`, not copied - the guards are unchanged.
+
+One subtlety: the repeat counter is per-**turn**, not per-session. Calling
+`get_order(SR-1005)` in turn 1 and again in turn 4 is normal conversation, not a
+loop. Persisting `seen` across turns would block legitimate repeat questions.
+
+## It works, and the control proves it
+
+```
+Q: Which orders are in transit?          -> SR-1003 (Arjun), SR-1005 (Neha)
+Q: What did the second one cost?         -> SR-1005, Rs 12,999
+Q: Who ordered it?                       -> Neha Gupta
+Q: Is that more expensive than the first? -> yes, 12,999 vs 6,499
+```
+
+Same follow-up with **no session_id**:
+
+```
+Q: What did the second one cost?  ->  "SR-1002, Yoga mat, Rs 1,899"
+```
+
+A different order, a different customer, stated with full confidence. No error,
+nothing to alert on. That is what "the API is stateless" costs you, and why
+losing a session is worse than failing outright.
+
+## The store is deliberately wrong
+
+```python
+SESSIONS: dict[str, dict] = {}
+```
+
+Three problems, in increasing nastiness:
+
+1. **Dies on restart.** Obvious, tolerable in dev.
+2. **Breaks with >1 uvicorn worker.** Turn 2 can land on a different process
+   with a different dict, so sessions vanish *intermittently*. Perfect in dev,
+   broken under load - the worst kind of bug.
+3. **Never evicts.** A memory leak with a session id attached.
+
+The real answer is Redis or a DB, and it is not just `json.dumps`: assistant
+messages are **SDK objects carrying provider metadata** (Gemini's
+`thought_signature`), and rebuilding them field-by-field 400s - the same trap as
+`05_tools`' "append the assistant message verbatim". Pickle them, or store the
+provider's own serialization.
+
+## What actually accumulates
+
+`GET /chat/{id}` after 4 turns - 15 messages:
+
+```
+system     ...
+user       Which orders are in transit?
+assistant  ChatCompletionMessage(content=None, tool_calls=[...])
+tool       [{"order_id": "SR-1003", ...}]          <- the bulk
+assistant  There are 2 orders currently in transit...
+...
+```
+
+Mostly **tool results**, not chat. Context grew 355 -> 560 -> 592 -> 841 tokens
+across four short questions, and every future turn resends all of it. This is
+`02_context`'s problem arriving in production: a chatbot grows by a sentence per
+turn, an agent grows by a JSON blob per *tool call*.
+
+`MAX_MESSAGES` here is the crudest possible fix - pin the system message, drop
+the oldest turns. It is `02_context`'s sliding window, and it will happily cut a
+`tool` message away from the `assistant` message that requested it. Summarization
+(`02_context/3_summary.py`) is the better answer.
+
+Worth noting turn 3 - *"Who ordered it?"* - used **no tool call at all**. The
+answer was already in context. Longer context costs more per turn but can buy
+back whole round trips.

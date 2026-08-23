@@ -16,6 +16,7 @@ There is no other step. Everything hard about RAG is in what you retrieve.
 | `kb.py` | a chunk as a RECORD - id, source, effective date, status, authority |
 | `3_grounded.py` | filter-then-rank + citations - the fix for `2_hard` |
 | `4_rerank.py` | retrieve wide, rerank narrow - and a real "found nothing" signal |
+| `rag.py` | all of the above as one function - **this is what you ship** |
 
 ```bash
 uv run 08_rag/corpus.py                 # build the index (cached)
@@ -24,6 +25,7 @@ uv run 08_rag/1_naive.py "what does error E-419 mean"
 uv run 08_rag/2_hard.py
 uv run 08_rag/3_grounded.py
 uv run 08_rag/4_rerank.py
+uv run 08_rag/rag.py "what does error E-419 mean"
 ```
 
 ## The index stores the model name
@@ -293,3 +295,47 @@ distinguishing signal is the exact token, when the corpus is large enough that
 near-duplicates crowd the top-k, or for rare proper nouns the embedding model
 never saw. None of those is true of 17 clean chunks - so adding it here would
 have been cargo-culting, and `09_evals` is how you would decide rather than guess.
+
+## "Do I have to implement all of this?"
+
+No. This folder has five demo files because it keeps every **failure** around as
+runnable evidence - `1_naive.py` and `2_hard.py` exist to prove `3_grounded.py`
+is a fix and not arbitrary complexity. You would never ship them.
+
+What you ship is `rag.py`: **71 lines, one function.**
+
+```python
+from rag import answer
+r = answer("how much is delivery", chunks=CHUNKS, vectors=VECS, where=CURRENT_POLICY)
+r.text        # "Rs 99 for orders below Rs 500 ... [SHP-01]"
+r.sources     # the chunks actually cited
+r.refused     # True when nothing was relevant
+```
+
+## Build it in this order, not all at once
+
+| step | lines | add it when |
+|------|-------|-------------|
+| retrieve top-3, stuff, generate | ~25 | day one, always |
+| metadata + `where` filter | +10 | the first time production quotes a stale policy |
+| citations in the prompt | +3 | immediately - it is free and makes every bug diagnosable |
+| rerank | +20 | context noise costs real money, or you need honest refusals |
+| hybrid search | +30 | only after measuring that keyword beats vector on YOUR queries |
+
+Each row is a response to a failure you have actually observed. Building all of
+them upfront means carrying complexity you cannot justify and cannot tune,
+because you have no evidence about which part is doing the work.
+
+## Where the real difficulty is
+
+Not in these 71 lines. It is in:
+
+- **the corpus pipeline** - ingesting documents, chunking, re-embedding when they
+  change, and *deleting* what is stale. This is bigger than the RAG code and
+  nobody puts it in tutorials.
+- **knowing which knob to turn.** Every decision here - k, chunk size, filter,
+  rerank on/off - looks reasonable. Eyeballing a few answers has been wrong three
+  times across this repo. That is `09_evals`, and it is what turns the ladder
+  above from guesswork into a decision.
+
+The code is the easy part. The data governance and the measurement are the job.

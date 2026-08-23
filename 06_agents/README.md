@@ -10,6 +10,7 @@ when something goes wrong?** Everything here is about that.
 | `2_robust.py` | a dispatcher that never raises - failures become context, not crashes |
 | `3_loops.py` | repetition detection, two budgets, and a forced final answer |
 | `4_write.py` | a tool that MUTATES - approval gates, preconditions, an audit log |
+| `agent.py` | all four folded into one reusable loop you can import |
 
 ```bash
 uv run 06_agents/1_fragile.py            # watch it crash
@@ -19,6 +20,7 @@ uv run 06_agents/3_loops.py                        # normal
 uv run 06_agents/3_loops.py --stubborn             # watch the loop guard fire
 uv run 06_agents/4_write.py "Cancel order SR-1005"        # then answer y or n
 uv run 06_agents/4_write.py "Cancel Priya Sharma's order" # ambiguous - watch it refuse
+uv run 06_agents/agent.py "Cancel order SR-1005"          # the finished thing
 ```
 
 ## The one line that was fragile
@@ -260,3 +262,38 @@ assert sorted(t["function"]["name"] for t in TOOLS) == sorted(FUNCS)
 ```
 
 Cheap assertion, and it would have saved three confusing runs.
+
+## agent.py - the finished loop
+
+```python
+from agent import run, cli_approve
+r = run("Cancel order SR-1005", tools=TOOLS, funcs=FUNCS, system=SYSTEM,
+        write_tools={"cancel_order"}, approve=cli_approve)
+r.answer, r.audit, r.changed, r.rounds, r.calls, r.forced
+```
+
+Every guard from 01-04, no framework. Three design decisions worth defending:
+
+**Writes are denied by default.** `approve=None` refuses every write tool, so
+letting an agent change things is something you opt *into*:
+
+```python
+if approve and approve(name, args):   # no callback -> no writes, ever
+```
+
+**It asserts the tool list matches the function map** before the first API call:
+
+```
+AssertionError: TOOLS [...] != FUNCS ['cancel_order', ...]
+```
+
+That is the exact bug that made `4_write.py` look like a refusing model for three
+runs. One line, caught instantly, no tokens spent.
+
+**It returns a `Result`, not a string.** `answer` is what the user sees; `audit`,
+`changed`, `rounds`, `calls` and `forced` are what you log, bill, and alert on.
+`changed` deliberately differs from `len(audit)` - approved and actually-mutated
+are different numbers.
+
+Rebuilt with LangChain/LangGraph in `11_frameworks`, to see what a framework
+buys and what it hides.

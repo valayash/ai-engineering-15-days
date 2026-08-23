@@ -26,8 +26,8 @@ line of Python. `.env.example` has ready-to-uncomment blocks.
 | 03 | [prompting](03_prompting/) | done | ground-truth datasets, scoring prompt versions |
 | 04 | [structured_output](04_structured_output/) | done | JSON mode, Pydantic schemas, constrained decoding |
 | 05 | [tools](05_tools/) | done | function calling against a real SQLite DB |
-| 06 | agents | next | the loop, from scratch, no framework |
-| 07 | embeddings | | vectors, similarity, semantic search |
+| 06 | [agents](06_agents/) | done | tool failures, loop guards, budgets, human-in-the-loop writes |
+| 07 | embeddings | next | vectors, similarity, semantic search |
 | 08 | rag | | chunking, retrieval, reranking, citations |
 | 09 | evals | | LLM-as-judge, regression suites |
 | 10 | memory | | agent memory, multi-step planning |

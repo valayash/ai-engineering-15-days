@@ -7,10 +7,12 @@ gets a fixed-length list of floats. No prompt, no sampling, no randomness.
 |------|---------|
 | `1_vectors.py` | what a vector is, fixed size, deterministic, batching |
 | `2_similarity.py` | cosine vs keyword overlap - where they disagree |
+| `3_search.py` | ranking a corpus, and what it returns when it should return nothing |
 
 ```bash
 uv run 07_embeddings/1_vectors.py
 uv run 07_embeddings/2_similarity.py
+uv run 07_embeddings/3_search.py "how do I get my money back"
 ```
 
 `embed()` lives in `llm.py` next to `chat`/`ask`/`parse`. Model comes from
@@ -87,3 +89,76 @@ perfectly.
 > that ARE the same. Production systems need both.
 
 That is hybrid search, and it is `08_rag`.
+
+## Searching a corpus (3_search.py)
+
+No database. A list of vectors and `cosine()` is genuinely enough for a few
+thousand chunks - a vector DB buys an approximate index, persistence and metadata
+filters. Scale and ops, not correctness.
+
+Retrieval works, and keyword search would not have:
+
+| query | top hit |
+|-------|---------|
+| "my parcel has not shown up yet" | *"follow your shipment from the Orders page..."* |
+| "how do I get my money back" | *"Refunds are processed to the original payment method..."* |
+| "I forgot my login details" | *"To reset your password, use the Forgot Password link..."* |
+
+Not one shared keyword in any of those. Right document at rank 1 every time.
+
+## Then ask it something the docs cannot answer
+
+```
+0.699  "can I change my delivery address after ordering"
+       -> "Orders can only be cancelled while they are still being prepared..."
+0.692  "how many days do I have to return an item"
+       -> "Refunds are processed to the original payment method..."
+0.656  "do you deliver to Nepal"
+       -> "Standard delivery takes 3-5 working days within India..."
+```
+
+Every one of those sounds like something this help centre covers. **None is
+answered by any document in the corpus.** And the scores:
+
+```
+answerable      floor  0.619
+NOT answerable  ceiling 0.699   <- higher
+```
+
+The ranges overlap, so **no cosine threshold separates them.** Cut at 0.60 and
+four unanswerable questions get through; cut at 0.70 and almost every real
+question is rejected.
+
+Note that "capital of France" scored 0.500 and was easy to reject. The dangerous
+queries are not the absurd ones - they are the **adjacent** ones, which is
+exactly what real users ask.
+
+Feed those three hits to an LLM and it will answer confidently about a
+cancellation policy when the user asked about changing an address.
+
+> Retrieval does not tell you whether it found the answer. It tells you what was
+> nearest.
+
+Fourth appearance of the same root cause: `"required": ["customer"]` inventing
+`"Alice"`, *"never answer without tracking data"* looping forever, `"hi"`
+classified as `account`, and now top-k with nothing relevant to return.
+**Forced choice produces confident garbage.**
+
+The fixes are not a threshold: a reranker (a model that scores
+query-vs-document directly), or an explicit *"answer only from the context below;
+if it is not there, say so"* - and then measuring how often it actually says so.
+That is `08_rag` and `09_evals`.
+
+## Batch, or burn your rate limit
+
+The first version of this file called `embed()` twice per query - once to print,
+once to score. 20 API calls, ~70 seconds, most of it rate-limit sleep.
+
+```python
+QUERY_VECS = embed([q for q, _ in QUERIES])   # ONE call
+hits = rank(qv)                               # pure arithmetic, free
+```
+
+2 calls, 5.3 seconds. Separating "embed" from "rank" is not a micro-optimisation
+- the embedding is the only part that costs anything, and it is the only part
+you can cache.

@@ -54,25 +54,43 @@ a hallucinated name, truncated JSON, a camelCase typo. Deterministic, free, no
 API call. You cannot write a reliable test that *asks a model to misbehave*, so
 inject the malformed call yourself.
 
-## Recovery is behaviour you get for free, but only if you ask
+## Recovery is mostly free - measure before you credit the prompt
 
 `2_robust.py` on the failing courier:
 
 ```
 round 2: !! track_shipment -> error
-round 3: !! track_shipment -> error      (retried once, as instructed)
+round 3: !! track_shipment -> error      (retried once)
 round 4:    get_order      -> ok         (fell back on its own)
 round 5: FINAL -> "in_transit ... live tracking is unavailable"
 ```
 
-The fallback to `get_order` is not in the code. It came from the system prompt:
+The fallback to `get_order` is not in the code, so it is tempting to credit the
+system prompt. **Tested, and that is wrong.** Same file with `SYSTEM` deleted,
+three trials, identical every time:
 
-> *"retry at most once. If it still fails, answer with whatever you do know and
-> state plainly what was unavailable. Never claim a tool succeeded when it
-> returned an error."*
+```
+round 2: !! track_shipment -> error
+round 3:    get_order      -> ok         (no retry, straight to fallback)
+round 4: FINAL -> same honest answer
+```
 
-Without those sentences the same loop retries `track_shipment` until the cap and
-returns nothing. **In an agent, the system prompt is error-handling policy** -
-how hard to retry, when to give up, what to do with partial results, and whether
-it is allowed to paper over a failure. That last clause matters: a model with an
-error in context will happily invent a plausible tracking location.
+Recovery is this model's *default* behaviour once the error is in context. The
+only measurable difference the prompt made was **adding a retry** - which for a
+permanently-dead service is strictly worse.
+
+So `dispatch()` is doing nearly all the work, and the split is:
+
+| | job | fails how |
+|-|-----|-----------|
+| `dispatch()` | keep the process alive and put the error in context | hard - traceback |
+| `SYSTEM` | policy once the error is there: retry count, when to stop, honesty | soft - bad judgement |
+
+Keep the prompt anyway, for the clause none of these runs exercised:
+
+> *"Never claim a tool succeeded when it returned an error."*
+
+A silent fabricated tracking location is the failure that costs you, and it is
+the one you will not notice in a demo. But treat that as a **hypothesis to
+test**, not a fact - the same way `03_prompting` made you score prompt versions
+instead of trusting them. An untested sentence in a system prompt is decoration.

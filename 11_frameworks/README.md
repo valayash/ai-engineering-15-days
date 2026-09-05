@@ -7,10 +7,15 @@ cannot see what is being abstracted until you have written it by hand.
 | file | teaches |
 |------|---------|
 | `1_prebuilt.py` | `create_agent()` replaces the loop - and what comes back missing |
+| `2_control.py` | putting 06's guards back, as middleware |
+| `3_approval.py` | the write gate - where the framework beats the hand-rolled version |
 
 ```bash
 uv run 11_frameworks/1_prebuilt.py
 uv run 11_frameworks/1_prebuilt.py "which orders are in transit?"
+uv run 11_frameworks/2_control.py
+uv run 11_frameworks/2_control.py --stubborn    # watch the loop guard fire
+uv run 11_frameworks/3_approval.py
 ```
 
 ## What it buys
@@ -84,3 +89,97 @@ encode someone else's failures, not yours.
 `msg.content` is a string on some providers and a list of typed blocks on
 others - so `text_of()` in this file is provider-shaped code you are still
 writing, inside the abstraction that was supposed to hide the provider.
+
+## Getting the guards back (2_control.py)
+
+The real question about any framework is not "what does it do for free" but
+"when the defaults are not yours, is changing them clean or a fight?"
+
+LangChain's answer is **middleware** - objects that wrap steps of the loop.
+Four of the five guards from `06_agents` are one line each:
+
+| 06_agents, by hand | LangChain |
+|--------------------|-----------|
+| `dispatch()` - errors become context | `ToolErrorMiddleware(on_error=...)` |
+| `MAX_CALLS` | `ToolCallLimitMiddleware(run_limit=12)` |
+| `MAX_ROUNDS` | `ModelCallLimitMiddleware(run_limit=6)` |
+| approval gate on writes | `HumanInTheLoopMiddleware(interrupt_on=...)` |
+| **repetition guard on `(tool, args)`** | **not provided - write it** |
+
+That is a good showing. Rerun the question that crashed `1_prebuilt.py` and the
+agent now survives, retries once, and answers honestly - the same behaviour as
+the hand-built `2_robust.py`.
+
+### The fifth guard is still yours
+
+There is no repetition middleware. `@wrap_tool_call` gives you the interception
+point; the logic is yours:
+
+```python
+@wrap_tool_call
+def repetition_guard(request, handler):
+    sig = f"{call['name']}({json.dumps(call['args'], sort_keys=True)})"
+    if seen[sig] > REPEAT_LIMIT:
+        return ToolMessage(content="loop guard: ...", tool_call_id=call["id"])
+    return handler(request)
+```
+
+`sort_keys` is still load-bearing - the framework has no opinion about argument
+canonicalisation, so without it the model escapes the guard by reordering keys.
+`--stubborn` proves it fires:
+
+```
+[!!    ] track_shipment raised ConnectionError
+[!!    ] track_shipment raised ConnectionError
+[LOOP  ] blocked track_shipment({"order_id": "SR-1005"})
+-> rerouted to get_order, answered honestly
+```
+
+Same output as `06_agents/3_loops.py --stubborn`. **A framework covers the
+failures its authors met. Yours are still yours.**
+
+## Where the framework is genuinely better (3_approval.py)
+
+`4_write.py`'s gate was a blocking `input()` inside the loop. That works at a
+terminal and nowhere else - no human at 3am means the process hangs, and an HTTP
+request cannot sit open waiting for someone to click yes.
+
+LangGraph models approval as an **interrupt**:
+
+```
+invoke()  -> agent runs, hits cancel_order, STOPS
+          -> full state written to a checkpointer
+          -> the process is free to exit
+          ...
+invoke(Command(resume={"decisions": [{"type": "approve"}]}), same_thread_id)
+          -> resumes from saved state and continues
+```
+
+Measured, both paths:
+
+| decision | answer | DB after |
+|----------|--------|----------|
+| `approve` | "SR-1005 has been successfully cancelled and refunded" | `cancelled` |
+| `reject` | "was not canceled because you rejected the cancellation" | `in_transit` |
+
+This is **better than what we built by hand**, and worth admitting plainly. The
+resume can arrive from a different request, a different process, or tomorrow -
+which is the shape a real approval queue needs. The decision vocabulary is also
+richer than yes/no: `approve | reject | edit | respond`, where `edit` lets a
+human fix the arguments before the tool runs. Our `input()` could not do that.
+
+Note what did NOT move into the framework: `cancel_order`'s preconditions
+(delivered orders cannot be cancelled, cancelling twice does not refund twice)
+still live inside the function. That was the right call in `4_write.py` and it
+stays right here - **a prompt is a suggestion and middleware is configuration,
+but a function is not.**
+
+## Two API details that cost time
+
+Both were found by reading the source, not the docs:
+
+- resume payload is `{"decisions": [...]}`, not a bare list
+- the decision word is `approve`, not `accept` - `accept` raises
+
+Version churn is the standing tax on frameworks. The error messages were good,
+but only because we already knew what the code was supposed to do.
